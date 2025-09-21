@@ -11,7 +11,7 @@ from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from matplotlib.ticker import PercentFormatter
 from numpy.random import Generator, default_rng
-
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 from .config import PlotConfig
 from .simulate import SimulationResult, find_cross_index
 
@@ -28,28 +28,75 @@ def _get_axes(ax: Optional[Axes]) -> tuple[Figure, Axes]:
 def plot_return_distribution(
     returns: np.ndarray,
     *,
-    bins: int = 120,
-    ax: Optional[Axes] = None,
-) -> Figure:
-    """Plot a normalized histogram of monthly returns."""
+    bins: int = 180,
+    xlim: tuple[float, float] | None = None,
+    normalize_max: bool = True,
+    show_mean: bool = True,
+    inset: bool = True,
+    inset_xlim: tuple[float, float] | None = None,
+):
+    """
+    Histogram of per-period returns (e.g., daily). Draws a small inset but *no connector lines*.
 
-    fig, axis = _get_axes(ax)
-    counts, bin_edges = np.histogram(returns, bins=bins)
-    if counts.max() == 0:
-        normalized = counts
+    Args:
+        returns: arithmetic returns per period (after ISK drag if you passed those in).
+        bins: number of histogram bins.
+        xlim: zoom for main axes.
+        normalize_max: normalize bar heights to 0–1 (else density).
+        show_mean: vertical dashed line at sample mean.
+        inset: show a small inset of the central region.
+        inset_xlim: x-limits for the inset (e.g. (-0.015, 0.015)).
+    """
+    hist_counts, bin_edges = np.histogram(returns, bins=bins)
+    if normalize_max:
+        heights = hist_counts / (hist_counts.max() if hist_counts.max() else 1)
+        y_label = "Normalized frequency"
+        y_lim = (0, 1)
+        title = "Implied Return Distribution — Normalized height (max = 1)"
     else:
-        normalized = counts / counts.max()
+        widths = np.diff(bin_edges)
+        heights = hist_counts / (hist_counts.sum() * widths.mean())
+        y_label = "Density"
+        y_lim = None
+        title = "Implied Return Distribution — Density"
+
     centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    width = (bin_edges[1] - bin_edges[0]) * 0.95
-    axis.bar(centers, normalized, width=width, edgecolor="black", alpha=0.8)
-    axis.axvline(returns.mean(), linestyle="--", label=f"Mean ~{returns.mean():.2%}")
-    axis.set_title("Implied Return Distribution — Normalized height (max = 1)")
-    axis.set_xlabel("Return per period")
-    axis.set_ylabel("Normalized frequency")
-    axis.xaxis.set_major_formatter(PercentFormatter(1.0))
-    axis.set_ylim(0.0, 1.0)
-    axis.grid(alpha=0.3)
-    axis.legend()
+    width = (bin_edges[1] - bin_edges[0]) * 0.98
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(centers, heights, width=width, edgecolor="black", alpha=0.8)
+    if show_mean:
+        m = returns.mean()
+        ax.axvline(m, linestyle="--", label=f"Mean ~{m:.2%}")
+
+    ax.set_title(title)
+    ax.set_xlabel("Return per period")
+    ax.set_ylabel(y_label)
+    ax.xaxis.set_major_formatter(PercentFormatter(1.0))
+    if y_lim is not None:
+        ax.set_ylim(*y_lim)
+    if xlim is not None:
+        ax.set_xlim(*xlim)
+    if show_mean:
+        ax.legend()
+    ax.grid(alpha=0.3)
+
+    # ----- inset WITHOUT connector lines -----
+    if inset:
+        axins = inset_axes(ax, width="38%", height="38%", loc="upper left", borderpad=1.0)
+        axins.bar(centers, heights, width=width, edgecolor="black", alpha=0.8)
+        if show_mean:
+            axins.axvline(m, linestyle="--")
+        axins.xaxis.set_major_formatter(PercentFormatter(1.0))
+        axins.set_ylim(ax.get_ylim())
+        if inset_xlim is not None:
+            axins.set_xlim(*inset_xlim)
+        else:
+            # sensible default: zoom around the mode/mean area
+            axins.set_xlim(-0.015, 0.015)
+        axins.grid(alpha=0.2)
+        # no mark_inset/ConnectionPatch → no diagonal lines
+
     return fig
 
 

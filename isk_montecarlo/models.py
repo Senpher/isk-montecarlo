@@ -78,9 +78,14 @@ def generate_equity_cagr(
     sims: int,
     trading_days_per_year: int,
     rng: Generator,
+    daily_floor: float = -0.30,
 ) -> np.ndarray:
-    """Simulate equity-only CAGRs using the configured return model."""
-
+    """
+    Simulate equity-only CAGRs using the configured DAILY return model.
+    - Pre-tax, no deposits.
+    - Uses log compounding for numerical stability.
+    - Floors daily returns at `daily_floor` to avoid (1+r)<=0 under fat left tails.
+    """
     draw_daily = build_return_sampler(
         config,
         Granularity.DAILY,
@@ -88,9 +93,13 @@ def generate_equity_cagr(
         rng=rng,
     )
     days = years * trading_days_per_year
-    cagr = np.empty(sims)
+    cagr = np.empty(sims, dtype=np.float64)
     for idx in range(sims):
-        returns = draw_daily(days)
-        growth = float(np.prod(1.0 + returns))
-        cagr[idx] = growth ** (1.0 / years) - 1.0
+        r = draw_daily(days)  # daily arithmetic returns
+        if daily_floor is not None:
+            # prevent impossible events that break compounding (e.g., r < -100%)
+            r = np.maximum(r, daily_floor)
+        # robust compounding
+        log_growth = np.log1p(r).sum()
+        cagr[idx] = np.exp(log_growth / years) - 1.0
     return cagr
